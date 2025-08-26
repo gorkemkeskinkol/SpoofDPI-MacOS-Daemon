@@ -198,19 +198,70 @@ disable_system_proxy() {
 PF_ANCHOR="spoofdpi_rdr"
 PF_CONF="/tmp/pf_spoofdpi_rules.conf"
 
+# Detect active network interfaces
+get_active_interfaces() {
+  # Get list of active network interfaces (excluding loopback)
+  ifconfig -l | tr ' ' '\n' | grep -E '^(en|utun|ipsec|bridge)[0-9]+$' | head -10
+}
+
+# Validate if interface exists and is up
+validate_interface() {
+  local iface="$1"
+  if ifconfig "$iface" >/dev/null 2>&1; then
+    # Check if interface is up
+    if ifconfig "$iface" | grep -q "status: active\|flags.*UP"; then
+      return 0
+    fi
+  fi
+  return 1
+}
+
 pf_enable_rdr() {
   require_root
   msg "Enabling pf transparent redirection to port ${PORT}..."
   
-  # Create pf rules for transparent redirection
-  cat > "$PF_CONF" <<PF_RULES
-# SpoofDPI transparent redirection rules
-rdr on en0 inet proto tcp from any to any port 80 -> 127.0.0.1 port ${PORT}
-rdr on en0 inet proto tcp from any to any port 443 -> 127.0.0.1 port ${PORT}
-rdr on en1 inet proto tcp from any to any port 80 -> 127.0.0.1 port ${PORT}
-rdr on en1 inet proto tcp from any to any port 443 -> 127.0.0.1 port ${PORT}
-PF_RULES
-
+  # Determine which interfaces to use
+  local interfaces_to_use=""
+  if [[ -n "${SPOOFDPI_INTERFACES:-}" ]]; then
+    # Use user-specified interfaces
+    msg "Using custom interfaces: ${SPOOFDPI_INTERFACES}"
+    interfaces_to_use="$(echo "${SPOOFDPI_INTERFACES}" | tr ',' '\n')"
+  else
+    # Auto-detect active interfaces
+    interfaces_to_use="$(get_active_interfaces)"
+    msg "Auto-detected interfaces: $(echo "$interfaces_to_use" | tr '\n' ' ')"
+  fi
+  
+  # Validate interfaces and create rules
+  local valid_interfaces=""
+  local invalid_interfaces=""
+  
+  while IFS= read -r iface; do
+    [[ -z "$iface" ]] && continue
+    if validate_interface "$iface"; then
+      valid_interfaces="${valid_interfaces}${iface} "
+      msg "✓ Interface $iface is valid and active"
+    else
+      invalid_interfaces="${invalid_interfaces}${iface} "
+      warn "✗ Interface $iface is not available or inactive"
+    fi
+  done <<< "$interfaces_to_use"
+  
+  if [[ -z "$valid_interfaces" ]]; then
+    err "No valid network interfaces found. Cannot create pf rules."
+    return 1
+  fi
+  
+  # Generate pf rules for valid interfaces
+  {
+    echo "# SpoofDPI transparent redirection rules"
+    echo "# Generated for interfaces: $valid_interfaces"
+    for iface in $valid_interfaces; do
+      echo "rdr on $iface inet proto tcp from any to any port 80 -> 127.0.0.1 port ${PORT}"
+      echo "rdr on $iface inet proto tcp from any to any port 443 -> 127.0.0.1 port ${PORT}"
+    done
+  } > "$PF_CONF"
+  
   # Load the anchor if it doesn't exist
   if ! pfctl -a "$PF_ANCHOR" -s rules >/dev/null 2>&1; then
     pfctl -a "$PF_ANCHOR" -f "$PF_CONF" 2>/dev/null || {
@@ -224,7 +275,8 @@ PF_RULES
     pfctl -e 2>/dev/null || warn "Could not enable pf (may already be enabled)"
   fi
   
-  msg "pf transparent redirection enabled."
+  msg "pf transparent redirection enabled on interfaces: $valid_interfaces"
+  [[ -n "$invalid_interfaces" ]] && warn "Skipped interfaces: $invalid_interfaces"
 }
 
 pf_disable_rdr() {
@@ -325,13 +377,24 @@ Options:
   --pf-status     Show pf redirection status
 
 Env vars:
-  SPOOFDPI_PORT   Port for SpoofDPI (default: ${DEFAULT_PORT})
-  SPOOFDPI_BIN    Full path to spoofdpi binary (optional)
+  SPOOFDPI_PORT        Port for SpoofDPI (default: ${DEFAULT_PORT})
+  SPOOFDPI_BIN         Full path to spoofdpi binary (optional)
+  SPOOFDPI_INTERFACES  Comma-separated list of network interfaces for pf rules
+                       (e.g., "en0,en1,utun0" - auto-detected if not specified)
+
+Examples:
+  # Use specific interfaces for pf redirection
+  SPOOFDPI_INTERFACES="en0,utun0" sudo bash spoofdpi-setup.sh --pf-enable
+  
+  # Custom port with VPN interface
+  SPOOFDPI_PORT=8080 SPOOFDPI_INTERFACES="utun0" sudo bash spoofdpi-setup.sh --install --pf-enable
 
 Notes:
   - pf mode provides transparent redirection (no proxy config needed)
+  - pf mode auto-detects active interfaces (en*, utun*, ipsec*, bridge*)
   - Both proxy and pf modes can be used simultaneously
   - pf mode may interfere with some TLS connections
+  - Invalid/inactive interfaces are automatically skipped with warnings
 USAGE
   exit 0
 fi

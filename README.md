@@ -60,6 +60,16 @@ SPOOFDPI_PORT=53333 sudo bash spoofdpi-setup.sh --install --enable
   sudo bash spoofdpi-setup.sh --install --pf-enable
   ```
 
+- **Enable for specific network interfaces:**
+  ```bash
+  SPOOFDPI_INTERFACES="en0,utun0" sudo bash spoofdpi-setup.sh --pf-enable
+  ```
+
+- **Enable for VPN-only traffic:**
+  ```bash
+  SPOOFDPI_INTERFACES="utun0" sudo bash spoofdpi-setup.sh --install --pf-enable
+  ```
+
 - **Check pf redirection status:**
   ```bash
   sudo bash spoofdpi-setup.sh --pf-status
@@ -110,7 +120,7 @@ SPOOFDPI_PORT=53333 sudo bash spoofdpi-setup.sh --install --enable
 ## 🛠 Roadmap
 - [ ] Add uninstall script for complete cleanup  
 - [ ] Add CI workflow for syntax checks
-- [ ] Support for custom network interfaces in pf rules
+- [ ] Support for more granular pf rule configuration
 
 ---
 
