@@ -11,8 +11,9 @@ It also provides simple commands to **enable, disable, and check status**.
 - ✅ Install SpoofDPI automatically via Homebrew  
 - ✅ Create a LaunchDaemon that runs at **boot**  
 - ✅ Configure **system-wide HTTP/HTTPS proxies** to redirect traffic through SpoofDPI  
+- ✅ **Transparent redirection** via **pf (Packet Filter)** rules - no proxy configuration needed  
 - ✅ Use safe default port (**53210**) instead of popular dev ports like 8080  
-- ✅ Easy CLI commands: `--install`, `--enable`, `--disable`, `--status`
+- ✅ Easy CLI commands: `--install`, `--enable`, `--disable`, `--status`, `--pf-enable`, `--pf-disable`
 
 ---
 
@@ -35,6 +36,8 @@ SPOOFDPI_PORT=53333 sudo bash spoofdpi-setup.sh --install --enable
 
 ## 🔧 Usage
 
+### Standard Proxy Mode (via System Proxy Settings)
+
 - **Install and enable at boot:**
   ```bash
   sudo bash spoofdpi-setup.sh --install --enable
@@ -49,6 +52,45 @@ SPOOFDPI_PORT=53333 sudo bash spoofdpi-setup.sh --install --enable
   ```bash
   sudo bash spoofdpi-setup.sh --disable
   ```
+
+### Transparent Mode (via pf Packet Filter Rules)
+
+- **Install and enable transparent redirection:**
+  ```bash
+  sudo bash spoofdpi-setup.sh --install --pf-enable
+  ```
+
+- **Check pf redirection status:**
+  ```bash
+  sudo bash spoofdpi-setup.sh --pf-status
+  ```
+
+- **Disable transparent redirection:**
+  ```bash
+  sudo bash spoofdpi-setup.sh --pf-disable
+  ```
+
+### Mixed Usage
+
+- **Check both proxy and pf status:**
+  ```bash
+  sudo bash spoofdpi-setup.sh --status --pf-status
+  ```
+
+- **Use both modes simultaneously:**
+  ```bash
+  sudo bash spoofdpi-setup.sh --install --enable --pf-enable
+  ```
+
+### Key Differences
+
+| Feature | Proxy Mode | Transparent Mode (pf) |
+|---------|------------|----------------------|
+| Configuration Required | System proxy settings | None (transparent) |
+| Application Support | Proxy-aware apps only | All network traffic |
+| TLS Compatibility | High | May have issues |
+| Performance | Good | Better |
+| Setup Complexity | Simple | Advanced |
 
 ---
 
@@ -66,9 +108,9 @@ SPOOFDPI_PORT=53333 sudo bash spoofdpi-setup.sh --install --enable
 ---
 
 ## 🛠 Roadmap
-- [ ] Add optional **pf (Packet Filter)** rules for transparent redirect  
 - [ ] Add uninstall script for complete cleanup  
 - [ ] Add CI workflow for syntax checks
+- [ ] Support for custom network interfaces in pf rules
 
 ---
 

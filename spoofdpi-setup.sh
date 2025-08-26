@@ -194,12 +194,66 @@ disable_system_proxy() {
   done
 }
 
-### Optional: pf redirection (ADVANCED / COMMENTED OUT) ###
-# NOTE: Transparent redirection can break TLS in some cases.
-# To experiment, you could create an anchor and rdr-to 127.0.0.1:$PORT
-# for tcp ports 80/443, but proceed only if you know what you’re doing.
-# pf_enable_and_rdr() { :; }
-# pf_disable_rdr() { :; }
+### pf (Packet Filter) transparent redirection ###
+PF_ANCHOR="spoofdpi_rdr"
+PF_CONF="/tmp/pf_spoofdpi_rules.conf"
+
+pf_enable_rdr() {
+  require_root
+  msg "Enabling pf transparent redirection to port ${PORT}..."
+  
+  # Create pf rules for transparent redirection
+  cat > "$PF_CONF" <<PF_RULES
+# SpoofDPI transparent redirection rules
+rdr on en0 inet proto tcp from any to any port 80 -> 127.0.0.1 port ${PORT}
+rdr on en0 inet proto tcp from any to any port 443 -> 127.0.0.1 port ${PORT}
+rdr on en1 inet proto tcp from any to any port 80 -> 127.0.0.1 port ${PORT}
+rdr on en1 inet proto tcp from any to any port 443 -> 127.0.0.1 port ${PORT}
+PF_RULES
+
+  # Load the anchor if it doesn't exist
+  if ! pfctl -a "$PF_ANCHOR" -s rules >/dev/null 2>&1; then
+    pfctl -a "$PF_ANCHOR" -f "$PF_CONF" 2>/dev/null || {
+      warn "Could not load pf rules. Make sure pf is enabled."
+      return 1
+    }
+  fi
+  
+  # Enable pf if not already enabled
+  if ! pfctl -s info | grep -q "Status: Enabled"; then
+    pfctl -e 2>/dev/null || warn "Could not enable pf (may already be enabled)"
+  fi
+  
+  msg "pf transparent redirection enabled."
+}
+
+pf_disable_rdr() {
+  require_root
+  msg "Disabling pf transparent redirection..."
+  
+  # Flush the anchor rules
+  pfctl -a "$PF_ANCHOR" -F all 2>/dev/null || true
+  
+  # Clean up temp file
+  [[ -f "$PF_CONF" ]] && rm -f "$PF_CONF"
+  
+  msg "pf transparent redirection disabled."
+}
+
+pf_status() {
+  msg "pf status:"
+  if pfctl -s info | grep -q "Status: Enabled"; then
+    echo "  pf is enabled"
+    if pfctl -a "$PF_ANCHOR" -s rules 2>/dev/null | grep -q "rdr"; then
+      echo "  SpoofDPI redirection rules are active"
+      pfctl -a "$PF_ANCHOR" -s rules 2>/dev/null || true
+    else
+      echo "  No SpoofDPI redirection rules found"
+    fi
+  else
+    echo "  pf is disabled"
+  fi
+}
 
 print_status() {
   msg "LaunchDaemon status:"
@@ -224,6 +278,9 @@ DO_INSTALL=0
 DO_ENABLE=0
 DO_DISABLE=0
 DO_STATUS=0
+DO_PF_ENABLE=0
+DO_PF_DISABLE=0
+DO_PF_STATUS=0
 
 for arg in "$@"; do
   case "$arg" in
@@ -232,21 +289,49 @@ for arg in "$@"; do
     --enable)  DO_ENABLE=1 ;;
     --disable) DO_DISABLE=1 ;;
     --status)  DO_STATUS=1 ;;
+    --pf-enable) DO_PF_ENABLE=1 ;;
+    --pf-disable) DO_PF_DISABLE=1 ;;
+    --pf-status) DO_PF_STATUS=1 ;;
     *) warn "Unknown argument: $arg" ;;
   esac
   shift || true
 done
 
-if [[ $SHOW_HELP -eq 1 || ( $DO_INSTALL -eq 0 && $DO_ENABLE -eq 0 && $DO_DISABLE -eq 0 && $DO_STATUS -eq 0 ) ]]; then
+ALL_OPTS_COUNT=$((DO_INSTALL + DO_ENABLE + DO_DISABLE + DO_STATUS + DO_PF_ENABLE + DO_PF_DISABLE + DO_PF_STATUS))
+
+if [[ $SHOW_HELP -eq 1 || $ALL_OPTS_COUNT -eq 0 ]]; then
   cat <<USAGE
 Usage:
+  # Standard proxy mode (via system proxy settings)
   sudo bash spoofdpi-setup.sh --install --enable
   sudo bash spoofdpi-setup.sh --disable
   sudo bash spoofdpi-setup.sh --status
 
+  # Transparent mode (via pf packet filter rules)
+  sudo bash spoofdpi-setup.sh --install --pf-enable
+  sudo bash spoofdpi-setup.sh --pf-disable
+  sudo bash spoofdpi-setup.sh --pf-status
+
+  # Mixed usage
+  sudo bash spoofdpi-setup.sh --status --pf-status
+
+Options:
+  --install       Install SpoofDPI and create LaunchDaemon
+  --enable        Enable system proxy redirection
+  --disable       Disable proxy and remove daemon
+  --status        Show proxy and daemon status
+  --pf-enable     Enable transparent pf redirection
+  --pf-disable    Disable pf redirection
+  --pf-status     Show pf redirection status
+
 Env vars:
   SPOOFDPI_PORT   Port for SpoofDPI (default: ${DEFAULT_PORT})
   SPOOFDPI_BIN    Full path to spoofdpi binary (optional)
+
+Notes:
+  - pf mode provides transparent redirection (no proxy config needed)
+  - Both proxy and pf modes can be used simultaneously
+  - pf mode may interfere with some TLS connections
 USAGE
   exit 0
 fi
@@ -273,6 +358,18 @@ fi
 
 if [[ $DO_STATUS -eq 1 ]]; then
   print_status
+fi
+
+if [[ $DO_PF_ENABLE -eq 1 ]]; then
+  pf_enable_rdr
+fi
+
+if [[ $DO_PF_DISABLE -eq 1 ]]; then
+  pf_disable_rdr
+fi
+
+if [[ $DO_PF_STATUS -eq 1 ]]; then
+  pf_status
 fi
 
 exit 0
