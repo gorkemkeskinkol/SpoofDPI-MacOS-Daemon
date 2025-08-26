@@ -18,6 +18,21 @@ It also provides simple commands to **enable, disable, and check status**.
 
 ---
 
+## ⚡ Quick Install
+One-line installation with automatic setup:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gorkemkeskinkol/SpoofDPI-MacOS-Daemon/refs/heads/main/spoofdpi-setup.sh | sudo bash -s -- --install --enable --pf-enable
+```
+
+This command will:
+- ✅ Install SpoofDPI automatically  
+- ✅ Create and start the LaunchDaemon  
+- ✅ Enable both system proxy and transparent pf redirection  
+- ✅ Configure everything to run at boot  
+
+---
+
 ## 🚀 Installation
 Clone this repository and run the setup script:
 
