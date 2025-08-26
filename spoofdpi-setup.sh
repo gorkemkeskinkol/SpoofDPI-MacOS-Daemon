@@ -113,23 +113,103 @@ ensure_brew() {
 }
 
 install_spoofdpi() {
-  msg "Installing SpoofDPI (via Homebrew) if missing..."
+  msg "Installing SpoofDPI if missing..."
   if find_spoofdpi_bin >/dev/null 2>&1; then
     msg "SpoofDPI already present: $(find_spoofdpi_bin)"
     return 0
   fi
-  ensure_brew
-  if ! brew install spoofdpi 2>/dev/null; then
-    warn "brew install spoofdpi failed. Trying 'brew update' then retry..."
-    brew update
-    brew install spoofdpi || { 
-      err "Could not install SpoofDPI via Homebrew."
-      notify_error "Failed to install SpoofDPI via Homebrew"
-      exit 1
-    }
+  
+  # First try Homebrew if available and not running as root
+  if [[ "${EUID}" -ne 0 ]] && have_cmd brew; then
+    msg "Trying Homebrew installation..."
+    if brew install spoofdpi 2>/dev/null; then
+      msg "Installed SpoofDPI via Homebrew. Binary: $(find_spoofdpi_bin)"
+      notify_success "Installation Complete" "SpoofDPI installed via Homebrew"
+      return 0
+    else
+      warn "Homebrew installation failed, falling back to GitHub releases..."
+    fi
+  else
+    msg "Running as root or Homebrew not available, downloading from GitHub..."
   fi
-  msg "Installed SpoofDPI. Binary: $(find_spoofdpi_bin)"
-  notify_success "Installation Complete" "SpoofDPI installed successfully"
+  
+  # Download from GitHub releases
+  local install_dir="/usr/local/bin"
+  local binary_path="${install_dir}/spoofdpi"
+  local temp_dir="/tmp/spoofdpi-install"
+  
+  # Detect architecture
+  local arch
+  if [[ "$(uname -m)" == "arm64" ]]; then
+    arch="arm64"
+  else
+    arch="amd64"
+  fi
+  
+  msg "Detecting latest SpoofDPI release for macOS ${arch}..."
+  
+  # Get latest release info from GitHub API
+  local latest_url
+  latest_url=$(curl -s https://api.github.com/repos/xvzc/SpoofDPI/releases/latest | \
+               grep -o '"browser_download_url": *"[^"]*darwin-'${arch}'[^"]*"' | \
+               cut -d'"' -f4)
+  
+  if [[ -z "$latest_url" ]]; then
+    err "Could not find SpoofDPI release for macOS ${arch}"
+    notify_error "Failed to find SpoofDPI release for your platform"
+    exit 1
+  fi
+  
+  msg "Downloading: $latest_url"
+  
+  # Create temp directory
+  mkdir -p "$temp_dir"
+  cd "$temp_dir"
+  
+  # Download and extract
+  if ! curl -L -o spoofdpi.tar.gz "$latest_url"; then
+    err "Failed to download SpoofDPI"
+    notify_error "Failed to download SpoofDPI from GitHub"
+    exit 1
+  fi
+  
+  # Extract the binary
+  if ! tar -xzf spoofdpi.tar.gz; then
+    err "Failed to extract SpoofDPI archive"
+    notify_error "Failed to extract SpoofDPI archive"
+    exit 1
+  fi
+  
+  # Find the binary in extracted files
+  local extracted_binary
+  extracted_binary=$(find . -name "spoofdpi" -type f | head -1)
+  
+  if [[ -z "$extracted_binary" ]]; then
+    err "Could not find spoofdpi binary in extracted files"
+    notify_error "Could not find spoofdpi binary in archive"
+    exit 1
+  fi
+  
+  # Install to system location
+  msg "Installing to ${binary_path}..."
+  mkdir -p "$install_dir"
+  cp "$extracted_binary" "$binary_path"
+  chmod +x "$binary_path"
+  
+  # Cleanup
+  cd /
+  rm -rf "$temp_dir"
+  
+  # Verify installation
+  if [[ -x "$binary_path" ]]; then
+    msg "Successfully installed SpoofDPI to ${binary_path}"
+    msg "Version: $("$binary_path" --help 2>&1 | head -1 || echo "unknown")"
+    notify_success "Installation Complete" "SpoofDPI installed from GitHub releases"
+  else
+    err "Installation verification failed"
+    notify_error "SpoofDPI installation verification failed"
+    exit 1
+  fi
 }
 
 write_plist() {
@@ -152,7 +232,7 @@ write_plist() {
     <key>ProgramArguments</key>
     <array>
       <string>${bin}</string>
-      <string>-p</string>
+      <string>-port</string>
       <string>${PORT}</string>
     </array>
     <key>RunAtLoad</key>
