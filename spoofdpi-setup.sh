@@ -34,6 +34,36 @@ msg() { printf "\033[1;34m[spoofdpi]\033[0m %s\n" "$*"; }
 warn() { printf "\033[1;33m[warn]\033[0m %s\n" "$*"; }
 err() { printf "\033[1;31m[error]\033[0m %s\n" "$*"; }
 
+# Notification helpers (using native macOS notifications)
+notify_success() {
+  local title="$1"
+  local message="$2"
+  
+  # Check if notifications are enabled (default: enabled)
+  if [[ "${SPOOFDPI_NOTIFICATIONS:-1}" == "1" || "${SPOOFDPI_NOTIFICATIONS:-1}" == "true" ]]; then
+    osascript -e "display notification \"$message\" with title \"SpoofDPI\" subtitle \"$title\"" 2>/dev/null || true
+  fi
+}
+
+notify_error() {
+  local message="$1"
+  
+  # Check if notifications are enabled (default: enabled)
+  if [[ "${SPOOFDPI_NOTIFICATIONS:-1}" == "1" || "${SPOOFDPI_NOTIFICATIONS:-1}" == "true" ]]; then
+    osascript -e "display notification \"$message\" with title \"SpoofDPI\" subtitle \"Error\"" 2>/dev/null || true
+  fi
+}
+
+notify_info() {
+  local title="$1"
+  local message="$2"
+  
+  # Check if notifications are enabled (default: enabled)
+  if [[ "${SPOOFDPI_NOTIFICATIONS:-1}" == "1" || "${SPOOFDPI_NOTIFICATIONS:-1}" == "true" ]]; then
+    osascript -e "display notification \"$message\" with title \"SpoofDPI\" subtitle \"$title\"" 2>/dev/null || true
+  fi
+}
+
 require_root() {
   if [[ "${EUID}" -ne 0 ]]; then
     err "Please run as root (use: sudo bash spoofdpi-setup.sh ...)"; exit 1
@@ -92,9 +122,14 @@ install_spoofdpi() {
   if ! brew install spoofdpi 2>/dev/null; then
     warn "brew install spoofdpi failed. Trying 'brew update' then retry..."
     brew update
-    brew install spoofdpi || { err "Could not install SpoofDPI via Homebrew."; exit 1; }
+    brew install spoofdpi || { 
+      err "Could not install SpoofDPI via Homebrew."
+      notify_error "Failed to install SpoofDPI via Homebrew"
+      exit 1
+    }
   fi
   msg "Installed SpoofDPI. Binary: $(find_spoofdpi_bin)"
+  notify_success "Installation Complete" "SpoofDPI installed successfully"
 }
 
 write_plist() {
@@ -148,6 +183,7 @@ bootstrap_daemon() {
   launchctl enable system/"${LABEL}"
   launchctl kickstart -k system/"${LABEL}"
   msg "Daemon bootstrapped and started."
+  notify_success "Daemon Started" "SpoofDPI is now running on port ${PORT}"
 }
 
 bootout_daemon() {
@@ -155,6 +191,7 @@ bootout_daemon() {
   if launchctl print system/"${LABEL}" >/dev/null 2>&1; then
     launchctl bootout system/"${LABEL}" || true
     msg "Daemon stopped."
+    notify_info "Daemon Stopped" "SpoofDPI daemon has been stopped"
   else
     msg "Daemon not loaded."
   fi
@@ -225,6 +262,7 @@ uninstall_all() {
   require_root
   msg "Starting complete SpoofDPI uninstall..."
   warn "This will remove all SpoofDPI configurations and data."
+  notify_info "Uninstall Started" "Removing all SpoofDPI components..."
   
   # Stop and remove daemon
   msg "Step 1/6: Stopping and removing LaunchDaemon..."
@@ -252,6 +290,7 @@ uninstall_all() {
   ask_remove_binary
   
   msg "✅ Complete uninstall finished!"
+  notify_success "Uninstall Complete" "All SpoofDPI components have been removed"
   msg ""
   msg "Summary of removed items:"
   msg "  - LaunchDaemon: $PLIST"
@@ -279,6 +318,7 @@ enable_system_proxy() {
     networksetup -setwebproxystate "$svc" on || true
     networksetup -setsecurewebproxystate "$svc" on || true
   done
+  notify_success "Proxy Enabled" "System proxy configured for port ${PORT}"
 }
 
 disable_system_proxy() {
@@ -288,6 +328,7 @@ disable_system_proxy() {
     networksetup -setwebproxystate "$svc" off || true
     networksetup -setsecurewebproxystate "$svc" off || true
   done
+  notify_info "Proxy Disabled" "System proxy settings have been cleared"
 }
 
 ### pf (Packet Filter) transparent redirection ###
@@ -345,6 +386,7 @@ pf_enable_rdr() {
   
   if [[ -z "$valid_interfaces" ]]; then
     err "No valid network interfaces found. Cannot create pf rules."
+    notify_error "No valid network interfaces found for pf rules"
     return 1
   fi
   
@@ -373,6 +415,7 @@ pf_enable_rdr() {
   
   msg "pf transparent redirection enabled on interfaces: $valid_interfaces"
   [[ -n "$invalid_interfaces" ]] && warn "Skipped interfaces: $invalid_interfaces"
+  notify_success "Transparent Mode Enabled" "pf redirection active on: $(echo $valid_interfaces | tr ' ' ',')"
 }
 
 pf_disable_rdr() {
@@ -386,6 +429,7 @@ pf_disable_rdr() {
   [[ -f "$PF_CONF" ]] && rm -f "$PF_CONF"
   
   msg "pf transparent redirection disabled."
+  notify_info "Transparent Mode Disabled" "pf redirection rules have been removed"
 }
 
 pf_status() {
@@ -479,11 +523,13 @@ Options:
   --uninstall     Complete removal of all SpoofDPI components
 
 Env vars:
-  SPOOFDPI_PORT         Port for SpoofDPI (default: ${DEFAULT_PORT})
-  SPOOFDPI_BIN          Full path to spoofdpi binary (optional)
-  SPOOFDPI_INTERFACES   Comma-separated list of network interfaces for pf rules
-                        (e.g., "en0,en1,utun0" - auto-detected if not specified)
-  SPOOFDPI_KEEP_BINARY  Set to "1" to keep SpoofDPI binary during uninstall
+  SPOOFDPI_PORT          Port for SpoofDPI (default: ${DEFAULT_PORT})
+  SPOOFDPI_BIN           Full path to spoofdpi binary (optional)
+  SPOOFDPI_INTERFACES    Comma-separated list of network interfaces for pf rules
+                         (e.g., "en0,en1,utun0" - auto-detected if not specified)
+  SPOOFDPI_NOTIFICATIONS Set to "0" or "false" to disable system notifications
+                         (default: enabled)
+  SPOOFDPI_KEEP_BINARY   Set to "1" to keep SpoofDPI binary during uninstall
   SPOOFDPI_REMOVE_BINARY Set to "1" to auto-remove SpoofDPI binary during uninstall
 
 Examples:

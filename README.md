@@ -12,8 +12,9 @@ It also provides simple commands to **enable, disable, and check status**.
 - ✅ Create a LaunchDaemon that runs at **boot**  
 - ✅ Configure **system-wide HTTP/HTTPS proxies** to redirect traffic through SpoofDPI  
 - ✅ **Transparent redirection** via **pf (Packet Filter)** rules - no proxy configuration needed  
+- ✅ **Native macOS notifications** for operation status and error reporting  
 - ✅ Use safe default port (**53210**) instead of popular dev ports like 8080  
-- ✅ Easy CLI commands: `--install`, `--enable`, `--disable`, `--status`, `--pf-enable`, `--pf-disable`
+- ✅ Easy CLI commands: `--install`, `--enable`, `--disable`, `--status`, `--pf-enable`, `--pf-disable`, `--uninstall`
 
 ---
 
@@ -109,6 +110,20 @@ SPOOFDPI_PORT=53333 sudo bash spoofdpi-setup.sh --install --enable
   SPOOFDPI_KEEP_BINARY=1 sudo bash spoofdpi-setup.sh --uninstall
   ```
 
+### Notification System
+
+- **Disable system notifications:**
+  ```bash
+  SPOOFDPI_NOTIFICATIONS=0 sudo bash spoofdpi-setup.sh --install --enable
+  ```
+
+- **Disable notifications with false:**
+  ```bash
+  SPOOFDPI_NOTIFICATIONS=false sudo bash spoofdpi-setup.sh --pf-enable
+  ```
+
+**Note:** By default, the script shows native macOS notifications for successful operations, errors, and important status changes. Use `SPOOFDPI_NOTIFICATIONS=0` or `SPOOFDPI_NOTIFICATIONS=false` to disable them.
+
 ### Key Differences
 
 | Feature | Proxy Mode | Transparent Mode (pf) |
@@ -137,7 +152,6 @@ SPOOFDPI_PORT=53333 sudo bash spoofdpi-setup.sh --install --enable
 ## 🛠 Roadmap
 - [ ] Add CI workflow for syntax checks
 - [ ] Support for more granular pf rule configuration
-- [ ] Integration with system tray notifications
 
 ---
 
