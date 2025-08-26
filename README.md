@@ -92,6 +92,23 @@ SPOOFDPI_PORT=53333 sudo bash spoofdpi-setup.sh --install --enable
   sudo bash spoofdpi-setup.sh --install --enable --pf-enable
   ```
 
+### Complete Uninstall
+
+- **Remove everything (configurations only):**
+  ```bash
+  sudo bash spoofdpi-setup.sh --uninstall
+  ```
+
+- **Remove everything including SpoofDPI binary:**
+  ```bash
+  SPOOFDPI_REMOVE_BINARY=1 sudo bash spoofdpi-setup.sh --uninstall
+  ```
+
+- **Keep SpoofDPI binary during uninstall:**
+  ```bash
+  SPOOFDPI_KEEP_BINARY=1 sudo bash spoofdpi-setup.sh --uninstall
+  ```
+
 ### Key Differences
 
 | Feature | Proxy Mode | Transparent Mode (pf) |
@@ -118,9 +135,9 @@ SPOOFDPI_PORT=53333 sudo bash spoofdpi-setup.sh --install --enable
 ---
 
 ## 🛠 Roadmap
-- [ ] Add uninstall script for complete cleanup  
 - [ ] Add CI workflow for syntax checks
 - [ ] Support for more granular pf rule configuration
+- [ ] Integration with system tray notifications
 
 ---
 

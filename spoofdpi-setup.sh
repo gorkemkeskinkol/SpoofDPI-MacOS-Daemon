@@ -168,6 +168,102 @@ remove_plist() {
   fi
 }
 
+# Uninstall/cleanup helpers
+remove_logs() {
+  require_root
+  if [[ -d "$LOG_DIR" ]]; then
+    rm -rf "$LOG_DIR"
+    msg "Removed log directory: $LOG_DIR"
+  else
+    msg "Log directory not found: $LOG_DIR"
+  fi
+}
+
+cleanup_temp_files() {
+  require_root
+  local temp_files=("$PF_CONF")
+  for file in "${temp_files[@]}"; do
+    if [[ -f "$file" ]]; then
+      rm -f "$file"
+      msg "Removed temp file: $file"
+    fi
+  done
+}
+
+ask_remove_binary() {
+  local keep_binary="${SPOOFDPI_KEEP_BINARY:-}"
+  
+  # If user explicitly wants to keep binary, skip
+  if [[ "$keep_binary" == "1" || "$keep_binary" == "true" ]]; then
+    msg "Keeping SpoofDPI binary as requested."
+    return 0
+  fi
+  
+  # Check if SpoofDPI is installed via Homebrew
+  if ! have_cmd brew; then
+    msg "Homebrew not found. Skipping SpoofDPI binary removal."
+    return 0
+  fi
+  
+  if ! brew list spoofdpi >/dev/null 2>&1; then
+    msg "SpoofDPI not installed via Homebrew. Skipping binary removal."
+    return 0
+  fi
+  
+  msg "SpoofDPI binary found (installed via Homebrew)."
+  msg "To remove it completely, run: brew uninstall spoofdpi"
+  msg "Or set SPOOFDPI_REMOVE_BINARY=1 to auto-remove during uninstall."
+  
+  # Auto-remove if requested
+  if [[ "${SPOOFDPI_REMOVE_BINARY:-}" == "1" || "${SPOOFDPI_REMOVE_BINARY:-}" == "true" ]]; then
+    msg "Auto-removing SpoofDPI binary..."
+    brew uninstall spoofdpi || warn "Failed to uninstall SpoofDPI via Homebrew"
+  fi
+}
+
+uninstall_all() {
+  require_root
+  msg "Starting complete SpoofDPI uninstall..."
+  warn "This will remove all SpoofDPI configurations and data."
+  
+  # Stop and remove daemon
+  msg "Step 1/6: Stopping and removing LaunchDaemon..."
+  bootout_daemon
+  remove_plist
+  
+  # Disable proxy settings
+  msg "Step 2/6: Disabling system proxy settings..."
+  disable_system_proxy
+  
+  # Disable pf rules
+  msg "Step 3/6: Disabling pf redirection rules..."
+  pf_disable_rdr
+  
+  # Remove log directory
+  msg "Step 4/6: Removing log files..."
+  remove_logs
+  
+  # Clean temp files
+  msg "Step 5/6: Cleaning temporary files..."
+  cleanup_temp_files
+  
+  # Handle binary removal
+  msg "Step 6/6: Checking SpoofDPI binary..."
+  ask_remove_binary
+  
+  msg "✅ Complete uninstall finished!"
+  msg ""
+  msg "Summary of removed items:"
+  msg "  - LaunchDaemon: $PLIST"
+  msg "  - Log directory: $LOG_DIR"
+  msg "  - System proxy settings (all network services)"
+  msg "  - pf redirection rules"
+  msg "  - Temporary configuration files"
+  msg ""
+  msg "Note: To completely remove SpoofDPI binary, run:"
+  msg "  brew uninstall spoofdpi"
+}
+
 # System proxy helpers (affects all network services)
 list_services() {
   networksetup -listallnetworkservices 2>/dev/null | sed '1d' | sed '/^\*\*/d'
@@ -333,6 +429,7 @@ DO_STATUS=0
 DO_PF_ENABLE=0
 DO_PF_DISABLE=0
 DO_PF_STATUS=0
+DO_UNINSTALL=0
 
 for arg in "$@"; do
   case "$arg" in
@@ -344,12 +441,13 @@ for arg in "$@"; do
     --pf-enable) DO_PF_ENABLE=1 ;;
     --pf-disable) DO_PF_DISABLE=1 ;;
     --pf-status) DO_PF_STATUS=1 ;;
+    --uninstall) DO_UNINSTALL=1 ;;
     *) warn "Unknown argument: $arg" ;;
   esac
   shift || true
 done
 
-ALL_OPTS_COUNT=$((DO_INSTALL + DO_ENABLE + DO_DISABLE + DO_STATUS + DO_PF_ENABLE + DO_PF_DISABLE + DO_PF_STATUS))
+ALL_OPTS_COUNT=$((DO_INSTALL + DO_ENABLE + DO_DISABLE + DO_STATUS + DO_PF_ENABLE + DO_PF_DISABLE + DO_PF_STATUS + DO_UNINSTALL))
 
 if [[ $SHOW_HELP -eq 1 || $ALL_OPTS_COUNT -eq 0 ]]; then
   cat <<USAGE
@@ -367,6 +465,9 @@ Usage:
   # Mixed usage
   sudo bash spoofdpi-setup.sh --status --pf-status
 
+  # Complete uninstall
+  sudo bash spoofdpi-setup.sh --uninstall
+
 Options:
   --install       Install SpoofDPI and create LaunchDaemon
   --enable        Enable system proxy redirection
@@ -375,12 +476,15 @@ Options:
   --pf-enable     Enable transparent pf redirection
   --pf-disable    Disable pf redirection
   --pf-status     Show pf redirection status
+  --uninstall     Complete removal of all SpoofDPI components
 
 Env vars:
-  SPOOFDPI_PORT        Port for SpoofDPI (default: ${DEFAULT_PORT})
-  SPOOFDPI_BIN         Full path to spoofdpi binary (optional)
-  SPOOFDPI_INTERFACES  Comma-separated list of network interfaces for pf rules
-                       (e.g., "en0,en1,utun0" - auto-detected if not specified)
+  SPOOFDPI_PORT         Port for SpoofDPI (default: ${DEFAULT_PORT})
+  SPOOFDPI_BIN          Full path to spoofdpi binary (optional)
+  SPOOFDPI_INTERFACES   Comma-separated list of network interfaces for pf rules
+                        (e.g., "en0,en1,utun0" - auto-detected if not specified)
+  SPOOFDPI_KEEP_BINARY  Set to "1" to keep SpoofDPI binary during uninstall
+  SPOOFDPI_REMOVE_BINARY Set to "1" to auto-remove SpoofDPI binary during uninstall
 
 Examples:
   # Use specific interfaces for pf redirection
@@ -433,6 +537,10 @@ fi
 
 if [[ $DO_PF_STATUS -eq 1 ]]; then
   pf_status
+fi
+
+if [[ $DO_UNINSTALL -eq 1 ]]; then
+  uninstall_all
 fi
 
 exit 0
