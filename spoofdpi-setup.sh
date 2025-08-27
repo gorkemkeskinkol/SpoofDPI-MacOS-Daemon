@@ -789,9 +789,8 @@ fi
 
 if [[ $DO_ENABLE -eq 1 ]]; then
   # Check if daemon is already running correctly
-  local daemon_running=false
+  daemon_running=false
   if launchctl print system/"${LABEL}" >/dev/null 2>&1; then
-    local daemon_state
     daemon_state=$(launchctl print system/"${LABEL}" | grep "state =" | awk '{print $3}')
     [[ "$daemon_state" == "running" ]] && daemon_running=true
   fi
