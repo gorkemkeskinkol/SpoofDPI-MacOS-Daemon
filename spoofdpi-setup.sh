@@ -254,16 +254,68 @@ PLIST
 
 bootstrap_daemon() {
   require_root
-  # Unload if already there
+  
+  # Check if daemon is already loaded and running properly
   if launchctl print system/"${LABEL}" >/dev/null 2>&1; then
-    msg "Daemon already loaded. Replacing..."
-    launchctl bootout system/"${LABEL}" || true
+    local daemon_state
+    daemon_state=$(launchctl print system/"${LABEL}" | grep "state =" | awk '{print $3}')
+    
+    if [[ "$daemon_state" == "running" ]]; then
+      msg "Daemon already running. Restarting..."
+      launchctl kickstart -k system/"${LABEL}" 2>/dev/null || {
+        warn "Restart failed, forcing reload..."
+        launchctl bootout system/"${LABEL}" 2>/dev/null || true
+        sleep 1
+      }
+    else
+      msg "Daemon loaded but not running. Removing and reloading..."
+      launchctl bootout system/"${LABEL}" 2>/dev/null || true
+      sleep 1
+    fi
   fi
-  launchctl bootstrap system "$PLIST"
-  launchctl enable system/"${LABEL}"
-  launchctl kickstart -k system/"${LABEL}"
-  msg "Daemon bootstrapped and started."
-  notify_success "Daemon Started" "SpoofDPI is now running on port ${PORT}"
+  
+  # Wait a moment for cleanup
+  sleep 1
+  
+  # Bootstrap the daemon if not already loaded
+  if ! launchctl print system/"${LABEL}" >/dev/null 2>&1; then
+    if launchctl bootstrap system "$PLIST" 2>/dev/null; then
+      msg "Daemon bootstrapped successfully"
+    else
+      err "Failed to bootstrap daemon. Checking for existing plist conflicts..."
+      # Force removal of any stale references
+      launchctl bootout system/"${LABEL}" 2>/dev/null || true
+      sleep 2
+      # Try again
+      if ! launchctl bootstrap system "$PLIST" 2>/dev/null; then
+        err "Bootstrap failed again. Manual intervention may be required."
+        notify_error "Failed to start SpoofDPI daemon"
+        return 1
+      fi
+    fi
+  fi
+  
+  # Enable and start the daemon
+  launchctl enable system/"${LABEL}" 2>/dev/null || warn "Enable command failed"
+  
+  # Kickstart the daemon to ensure it's running
+  if launchctl kickstart -k system/"${LABEL}" 2>/dev/null; then
+    msg "Daemon started successfully"
+    notify_success "Daemon Started" "SpoofDPI is now running on port ${PORT}"
+  else
+    warn "Kickstart failed, daemon may not be running properly"
+    notify_error "SpoofDPI daemon start incomplete"
+  fi
+  
+  # Verify daemon is actually running
+  sleep 2
+  if launchctl print system/"${LABEL}" >/dev/null 2>&1; then
+    local final_state
+    final_state=$(launchctl print system/"${LABEL}" | grep "state =" | awk '{print $3}' || echo "unknown")
+    msg "Final daemon state: $final_state"
+  else
+    warn "Daemon not found after bootstrap attempt"
+  fi
 }
 
 bootout_daemon() {
@@ -388,27 +440,82 @@ list_services() {
   networksetup -listallnetworkservices 2>/dev/null | sed '1d' | sed '/^\*\*/d'
 }
 
-enable_system_proxy() {
-  # Sets Web Proxy and Secure Web Proxy to 127.0.0.1:$PORT for all services
+# Validate if a network service actually exists and can be configured
+validate_service() {
+  local service="$1"
+  # Try to get current proxy settings - if it fails, service is invalid
+  networksetup -getwebproxy "$service" >/dev/null 2>&1
+}
+
+# Get only valid/configurable network services
+list_valid_services() {
   local svc
   for svc in $(list_services); do
-    msg "Enabling proxy on service: $svc"
-    networksetup -setwebproxy "$svc" 127.0.0.1 "$PORT" off || true
-    networksetup -setsecurewebproxy "$svc" 127.0.0.1 "$PORT" off || true
-    networksetup -setwebproxystate "$svc" on || true
-    networksetup -setsecurewebproxystate "$svc" on || true
+    if validate_service "$svc"; then
+      echo "$svc"
+    fi
   done
-  notify_success "Proxy Enabled" "System proxy configured for port ${PORT}"
+}
+
+enable_system_proxy() {
+  # Sets Web Proxy and Secure Web Proxy to 127.0.0.1:$PORT for valid services only
+  local svc
+  local valid_count=0
+  local invalid_count=0
+  
+  for svc in $(list_services); do
+    if validate_service "$svc"; then
+      msg "Enabling proxy on service: $svc"
+      if networksetup -setwebproxy "$svc" 127.0.0.1 "$PORT" off 2>/dev/null && \
+         networksetup -setsecurewebproxy "$svc" 127.0.0.1 "$PORT" off 2>/dev/null && \
+         networksetup -setwebproxystate "$svc" on 2>/dev/null && \
+         networksetup -setsecurewebproxystate "$svc" on 2>/dev/null; then
+        ((valid_count++))
+      else
+        warn "Failed to configure proxy for service: $svc"
+      fi
+    else
+      ((invalid_count++))
+    fi
+  done
+  
+  if [[ $valid_count -gt 0 ]]; then
+    msg "✅ Proxy enabled on $valid_count valid service(s)"
+    notify_success "Proxy Enabled" "System proxy configured for port ${PORT} on $valid_count services"
+  else
+    warn "No valid services found for proxy configuration"
+  fi
+  
+  [[ $invalid_count -gt 0 ]] && msg "⚠️  Skipped $invalid_count invalid/unavailable service(s)"
 }
 
 disable_system_proxy() {
   local svc
+  local disabled_count=0
+  local invalid_count=0
+  
   for svc in $(list_services); do
-    msg "Disabling proxy on service: $svc"
-    networksetup -setwebproxystate "$svc" off || true
-    networksetup -setsecurewebproxystate "$svc" off || true
+    if validate_service "$svc"; then
+      msg "Disabling proxy on service: $svc"
+      if networksetup -setwebproxystate "$svc" off 2>/dev/null && \
+         networksetup -setsecurewebproxystate "$svc" off 2>/dev/null; then
+        ((disabled_count++))
+      else
+        warn "Failed to disable proxy for service: $svc"
+      fi
+    else
+      ((invalid_count++))
+    fi
   done
-  notify_info "Proxy Disabled" "System proxy settings have been cleared"
+  
+  if [[ $disabled_count -gt 0 ]]; then
+    msg "✅ Proxy disabled on $disabled_count valid service(s)"
+    notify_info "Proxy Disabled" "System proxy settings cleared for $disabled_count services"
+  else
+    msg "No valid services found to disable proxy"
+  fi
+  
+  [[ $invalid_count -gt 0 ]] && msg "⚠️  Skipped $invalid_count invalid/unavailable service(s)"
 }
 
 ### pf (Packet Filter) transparent redirection ###
@@ -537,11 +644,22 @@ print_status() {
   echo
   msg "Proxy status per service:"
   local svc
+  local valid_services=0
+  local invalid_services=0
+  
   for svc in $(list_services); do
-    echo "--- $svc ---"
-    networksetup -getwebproxy "$svc" || true
-    networksetup -getsecurewebproxy "$svc" || true
+    if validate_service "$svc"; then
+      echo "--- $svc ---"
+      networksetup -getwebproxy "$svc" 2>/dev/null || echo "  Web Proxy: Not configured"
+      networksetup -getsecurewebproxy "$svc" 2>/dev/null || echo "  Secure Web Proxy: Not configured"
+      ((valid_services++))
+    else
+      ((invalid_services++))
+    fi
   done
+  
+  echo
+  msg "Summary: Checked $valid_services valid service(s), skipped $invalid_services invalid service(s)"
 }
 
 ### CLI ###
@@ -629,14 +747,63 @@ USAGE
   exit 0
 fi
 
-# Execute actions
+# Idempotent execution - check what's already done and only do what's missing
 if [[ $DO_INSTALL -eq 1 ]]; then
+  # Install SpoofDPI binary if missing
   install_spoofdpi
-  write_plist
+  
+  # Create/update LaunchDaemon plist if needed
+  if [[ ! -f "$PLIST" ]] || ! cmp -s <(cat >"$PLIST.tmp" <<TMPLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>${LABEL}</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>$(find_spoofdpi_bin)</string>
+      <string>-port</string>
+      <string>${PORT}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>${LOG_DIR}/out.log</string>
+    <key>StandardErrorPath</key>
+    <string>${LOG_DIR}/err.log</string>
+  </dict>
+</plist>
+TMPLIST
+cat "$PLIST.tmp") "$PLIST" 2>/dev/null; then
+    msg "LaunchDaemon plist needs update or doesn't exist"
+    write_plist
+    rm -f "$PLIST.tmp"
+  else
+    msg "LaunchDaemon plist already up to date"
+    rm -f "$PLIST.tmp"
+  fi
 fi
 
 if [[ $DO_ENABLE -eq 1 ]]; then
-  bootstrap_daemon
+  # Check if daemon is already running correctly
+  local daemon_running=false
+  if launchctl print system/"${LABEL}" >/dev/null 2>&1; then
+    local daemon_state
+    daemon_state=$(launchctl print system/"${LABEL}" | grep "state =" | awk '{print $3}')
+    [[ "$daemon_state" == "running" ]] && daemon_running=true
+  fi
+  
+  # Bootstrap daemon if not running
+  if [[ "$daemon_running" == "false" ]]; then
+    bootstrap_daemon
+  else
+    msg "Daemon already running, skipping bootstrap"
+  fi
+  
+  # Enable system proxy (always run to ensure current config)
   enable_system_proxy
   msg "Enabled system proxies and daemon. Using port ${PORT}."
   print_status

@@ -14,6 +14,9 @@ It also provides simple commands to **enable, disable, and check status**.
 - ✅ **Transparent redirection** via **pf (Packet Filter)** rules - no proxy configuration needed  
 - ✅ **Native macOS notifications** for operation status and error reporting  
 - ✅ Use safe default port (**53210**) instead of popular dev ports like 8080  
+- ✅ **Robust error handling** with network service validation  
+- ✅ **Idempotent execution** - safe to run multiple times  
+- ✅ **Smart daemon management** with conflict detection and recovery  
 - ✅ Easy CLI commands: `--install`, `--enable`, `--disable`, `--status`, `--pf-enable`, `--pf-disable`, `--uninstall`
 
 ---
@@ -157,10 +160,69 @@ SPOOFDPI_PORT=53333 sudo bash spoofdpi-setup.sh --install --enable
 
 ---
 
+## 🔧 Troubleshooting
+
+### Common Issues
+
+#### 1. Network Service Errors
+If you see errors like:
+```
+** Error: The parameters were not valid.
+** Error: Unable to find item in network database.
+```
+
+**Solution:** This is normal and expected. The script now automatically skips invalid/unavailable network services and only configures valid ones. You'll see a summary like:
+```
+✅ Proxy enabled on 3 valid service(s)
+⚠️  Skipped 7 invalid/unavailable service(s)
+```
+
+#### 2. Bootstrap Failed Errors
+If you see:
+```
+Bootstrap failed: 5: Input/output error
+```
+
+**Solution:** Run the script again. The improved script now handles daemon conflicts automatically:
+```bash
+sudo bash spoofdpi-setup.sh --install --enable
+```
+
+#### 3. Daemon Already Running
+If the daemon is already running, the script will:
+- ✅ Skip unnecessary steps (idempotent execution)
+- ✅ Only restart if needed
+- ✅ Show current status
+
+#### 4. Permission Issues
+Make sure to run with `sudo`:
+```bash
+sudo bash spoofdpi-setup.sh --install --enable
+```
+
+#### 5. Check Current Status
+To see what's currently configured:
+```bash
+sudo bash spoofdpi-setup.sh --status --pf-status
+```
+
+### Manual Cleanup
+If something goes wrong, you can always clean up completely:
+```bash
+# Complete uninstall
+sudo bash spoofdpi-setup.sh --uninstall
+
+# Then reinstall
+sudo bash spoofdpi-setup.sh --install --enable --pf-enable
+```
+
+---
+
 ## ⚠️ Notes
 - Requires **sudo/root** to install LaunchDaemons and configure system proxies.
 - Tested on macOS Ventura and Sonoma (Intel & Apple Silicon).  
 - Using DPI bypass tools may be subject to local laws — **use responsibly**.
+- Script is **idempotent** - safe to run multiple times without causing issues.
 
 ---
 
